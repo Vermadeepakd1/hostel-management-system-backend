@@ -70,6 +70,98 @@ router.get('/', verifyToken, async (req, res) => {
 });
 
 
+
+
+// @route   PUT /rooms/update/:id
+// @desc    Update a room's details (e.g., capacity)
+// @access  Admin (implicit)
+router.put('/update/:id', verifyToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { capacity } = req.body;
+
+        if (!capacity) {
+            return res.status(400).json({ message: 'Capacity is required.' });
+        }
+
+        const numericCapacity = parseInt(capacity, 10);
+        if (isNaN(numericCapacity) || numericCapacity <= 0) {
+            return res.status(400).json({ message: 'Capacity must be a positive number.' });
+        }
+
+        // --- Safety Check ---
+        // Get the current occupancy
+        const [roomRows] = await db.promise().query('SELECT current_occupancy FROM rooms WHERE id = ?', [id]);
+        if (roomRows.length === 0) {
+            return res.status(404).json({ message: 'Room not found.' });
+        }
+
+        const room = roomRows[0];
+
+        // Block if the new capacity is less than the number of students already in the room
+        if (numericCapacity < room.current_occupancy) {
+            return res.status(409).json({
+                message: `Cannot set capacity to ${numericCapacity}. This room already has ${room.current_occupancy} students.`
+            });
+        }
+        // --- End Safety Check ---
+
+        // Update the room
+        await db.promise().query(
+            'UPDATE rooms SET capacity = ? WHERE id = ?',
+            [numericCapacity, id]
+        );
+
+        res.status(200).json({ message: 'Room capacity updated successfully.' });
+
+    } catch (err) {
+        console.error('Error updating room:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// @route   DELETE /rooms/delete/:id
+// @desc    Delete a room
+// @access  Admin (implicit)
+router.delete('/delete/:id', verifyToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // --- Safety Check ---
+        // Check if the room exists and is empty
+        const [roomRows] = await db.promise().query('SELECT current_occupancy FROM rooms WHERE id = ?', [id]);
+        if (roomRows.length === 0) {
+            return res.status(404).json({ message: 'Room not found.' });
+        }
+
+        const room = roomRows[0];
+
+        // Block deletion if the room is not empty
+        if (room.current_occupancy > 0) {
+            return res.status(409).json({
+                message: `Cannot delete room. It is currently occupied by ${room.current_occupancy} student(s).`
+            });
+        }
+        // --- End Safety Check ---
+
+        // Delete the room
+        await db.promise().query('DELETE FROM rooms WHERE id = ?', [id]);
+
+        res.status(200).json({ message: 'Room deleted successfully.' });
+
+    } catch (err) {
+        // Handle cases where a student is still linked (if foreign keys were added)
+        if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+            return res.status(409).json({ message: 'Cannot delete room. It is still referenced by other records.' });
+        }
+        console.error('Error deleting room:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+
+
+
 // @route   POST /rooms/upload
 // @desc    Add rooms in bulk from a CSV file
 // @access  Admin (implicit)
