@@ -5,6 +5,30 @@ const db = require('../db');
 const verifyToken = require('../middleware/verifyToken'); // your JWT middleware
 const bcrypt = require('bcrypt');
 
+const multer = require('multer');
+const csv = require('csv-parser');
+const stream = require('stream');
+
+
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
+
+//helper function to parse csv
+const parseCsv = (buffer) => {
+    return new Promise((resolve, reject) => {
+        const results = [];
+        const readableStream = new stream.PassThrough();
+        readableStream.end(buffer);
+
+        readableStream
+            .pipe(csv())
+            .on('data', (data) => results.push(data))
+            .on('end', () => resolve(results))
+            .on('error', (err) => reject(err));
+    });
+};
+
+
 
 // Add a new student (UPDATED WITH TRANSACTION LOGIC)
 router.post('/add', verifyToken, async (req, res) => {
@@ -34,7 +58,6 @@ router.post('/add', verifyToken, async (req, res) => {
         }
 
         // Step 2: Insert the new student with the corrected SQL
-        // The placeholders have been replaced with the actual column names and variables
         await connection.query(
             `INSERT INTO students 
                 (name, roll_no, email, phone, gender, dob, address, guardian_name, guardian_phone, room_no, department, year, password)
@@ -77,7 +100,6 @@ router.get('/', verifyToken, async (req, res) => {
 
 // routes/students.js
 
-// ... (your other routes)
 
 // Update a student's details (UPDATED WITH TRANSACTION LOGIC)
 router.put('/update/:id', verifyToken, async (req, res) => {
@@ -177,6 +199,74 @@ router.delete('/delete/:id', verifyToken, async (req, res) => {
         if (connection) connection.release();
     }
 });
+
+
+// @route   POST /students/upload
+// @desc    Add students in bulk from a CSV file
+// @access  Admin (implicit)
+router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
+
+    // Check if a file was uploaded
+    if (!req.file) {
+        return res.status(400).json({ message: 'No file uploaded.' });
+    }
+
+    try {
+        // 1. Parse the CSV buffer
+        const students = await parseCsv(req.file.buffer);
+
+        if (students.length === 0) {
+            return res.status(400).json({ message: 'CSV file is empty or invalid.' });
+        }
+
+        // 2. Prepare the data for bulk insert
+        const studentRows = await Promise.all(
+            students.map(async (student) => {
+                // Hash the password (using roll_no as default)
+                // Ensure student.roll_no exists in your CSV, otherwise this will fail
+                const salt = await bcrypt.genSalt(10);
+                const hashedPassword = await bcrypt.hash(student.roll_no, salt);
+
+                // These CSV headers (e.g., student.name) MUST match your CSV file
+                return [
+                    student.name,
+                    student.roll_no,
+                    student.email,
+                    student.phone,
+                    student.gender,
+                    student.dob,
+                    student.address,
+                    student.guardian_name,
+                    student.guardian_phone,
+                    student.room_no,
+                    student.department,
+                    student.year,
+                    hashedPassword
+                ];
+            })
+        );
+
+        // 3. Create the bulk insert query
+        // "INSERT IGNORE" skips any students whose roll_no or email already exist
+        const sql = `
+            INSERT IGNORE INTO students 
+            (name, roll_no, email, phone, gender, dob, address, guardian_name, guardian_phone, room_no, department, year, password) 
+            VALUES ?`;
+
+        // 4. Execute the query
+        const [result] = await db.promise().query(sql, [studentRows]);
+
+        res.status(201).json({
+            message: `Successfully added ${result.affectedRows} new students. ${result.warningStatus} duplicates were skipped.`,
+        });
+
+    } catch (err) {
+        console.error('CSV Upload Error:', err);
+        res.status(500).json({ message: 'Error processing CSV file.' });
+    }
+});
+
+
 
 
 module.exports = router;
