@@ -201,15 +201,21 @@ router.delete('/delete/:id', verifyToken, async (req, res) => {
 });
 
 
+// routes/students.js
+
+// ... (keep all your requires, multer setup, and parseCsv function) ...
+
 // @route   POST /students/upload
-// @desc    Add students in bulk from a CSV file
+// @desc    Add students in bulk from a CSV file (TRANSACTIONAL)
 // @access  Admin (implicit)
 router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
 
-    // Check if a file was uploaded
     if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded.' });
     }
+
+    const connection = await db.promise().getConnection();
+    let addedCount = 0;
 
     try {
         // 1. Parse the CSV buffer
@@ -219,50 +225,94 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
             return res.status(400).json({ message: 'CSV file is empty or invalid.' });
         }
 
-        // 2. Prepare the data for bulk insert
-        const studentRows = await Promise.all(
-            students.map(async (student) => {
-                // Hash the password (using roll_no as default)
-                // Ensure student.roll_no exists in your CSV, otherwise this will fail
-                const salt = await bcrypt.genSalt(10);
-                const hashedPassword = await bcrypt.hash(student.roll_no, salt);
+        // 2. Start a single large transaction
+        await connection.beginTransaction();
 
-                // These CSV headers (e.g., student.name) MUST match your CSV file
-                return [
-                    student.name,
-                    student.roll_no,
-                    student.email,
-                    student.phone,
-                    student.gender,
-                    student.dob,
-                    student.address,
-                    student.guardian_name,
-                    student.guardian_phone,
-                    student.room_no,
-                    student.department,
-                    student.year,
-                    hashedPassword
-                ];
-            })
-        );
+        // 3. Keep track of room occupancy changes within this batch
+        const roomOccupancyUpdates = {};
 
-        // 3. Create the bulk insert query
-        // "INSERT IGNORE" skips any students whose roll_no or email already exist
-        const sql = `
-            INSERT IGNORE INTO students 
-            (name, roll_no, email, phone, gender, dob, address, guardian_name, guardian_phone, room_no, department, year, password) 
-            VALUES ?`;
+        // 4. Loop through each student and validate them one by one
+        for (const [index, student] of students.entries()) {
 
-        // 4. Execute the query
-        const [result] = await db.promise().query(sql, [studentRows]);
+            // Check for required fields in CSV
+            if (!student.name || !student.roll_no || !student.email || !student.room_no) {
+                throw new Error(`Row ${index + 2}: Missing required data (name, roll_no, email, or room_no).`);
+            }
+
+            // --- Check Room Availability ---
+            const [roomRows] = await connection.query(
+                'SELECT capacity, current_occupancy FROM rooms WHERE room_number = ?',
+                [student.room_no]
+            );
+
+            if (roomRows.length === 0) {
+                throw new Error(`Row ${index + 2}: Room "${student.room_no}" does not exist.`);
+            }
+
+            const room = roomRows[0];
+
+            // Check capacity, considering pending updates from this same batch
+            const pendingOccupancy = roomOccupancyUpdates[student.room_no] || 0;
+            if ((room.current_occupancy + pendingOccupancy) >= room.capacity) {
+                throw new Error(`Row ${index + 2}: Room "${student.room_no}" is full.`);
+            }
+
+            // --- Hash Password ---
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(student.roll_no, salt);
+
+            // --- Insert Student (with error check for duplicate roll_no/email) ---
+            try {
+                await connection.query(
+                    `INSERT INTO students 
+                    (name, roll_no, email, phone, gender, dob, address, guardian_name, guardian_phone, room_no, department, year, password) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        student.name, student.roll_no, student.email, student.phone,
+                        student.gender, student.dob, student.address, student.guardian_name,
+                        student.guardian_phone, student.room_no, student.department,
+                        student.year, hashedPassword
+                    ]
+                );
+
+                // If insert is successful, track the occupancy update
+                roomOccupancyUpdates[student.room_no] = (pendingOccupancy + 1);
+                addedCount++;
+
+            } catch (err) {
+                if (err.code === 'ER_DUP_ENTRY') {
+                    throw new Error(`Row ${index + 2}: Duplicate entry for roll_no or email: "${student.roll_no} / ${student.email}".`);
+                }
+                throw err;
+            }
+        }
+
+        // 5. If all students are processed, apply the occupancy updates
+        for (const roomNumber in roomOccupancyUpdates) {
+            await connection.query(
+                'UPDATE rooms SET current_occupancy = current_occupancy + ? WHERE room_number = ?',
+                [roomOccupancyUpdates[roomNumber], roomNumber]
+            );
+        }
+
+        // 6. If everything is perfect, commit the transaction
+        await connection.commit();
 
         res.status(201).json({
-            message: `Successfully added ${result.affectedRows} new students. ${result.warningStatus} duplicates were skipped.`,
+            message: `Successfully added ${addedCount} new students.`,
         });
 
     } catch (err) {
-        console.error('CSV Upload Error:', err);
-        res.status(500).json({ message: 'Error processing CSV file.' });
+        // 7. If any error occurred, roll back the entire batch
+        await connection.rollback();
+        console.error('CSV Upload Transaction Error:', err.message);
+        res.status(400).json({
+            message: 'Upload failed. The entire batch was rolled back.',
+            error: err.message
+        });
+    } finally {
+        // 8. Always release the connection
+        if (connection) connection.release();
     }
 });
 
