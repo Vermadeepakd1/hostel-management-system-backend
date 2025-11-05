@@ -1,22 +1,20 @@
 // utils/mailer.js
 const Brevo = require('@getbrevo/brevo');
 
-// --- THIS IS THE CORRECTED AUTHENTICATION ---
-// 1. Get the default API client instance from the main Brevo object
-const defaultClient = Brevo.ApiClient.instance;
-
-// 2. Configure the 'api-key' authentication
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY;
-// ---------------------------------------------
-
-// 3. Now, create an instance of the APIs we need
+// 1. Create an instance of the API
 const apiInstance = new Brevo.TransactionalEmailsApi();
 
-// 4. Create a reusable email-sending function
+// 2. Set the API key *directly* on the instance's authenticator.
+// This is the new, direct method that avoids the 'ApiClient.instance' crash.
+apiInstance.setApiKey(
+    Brevo.TransactionalEmailsApiApiKeys.apiKey,
+    process.env.BREVO_API_KEY
+);
+
+// 3. Create a reusable email-sending function
 const sendWelcomeEmail = async (toEmail, studentName, rollNo, tempPassword) => {
 
-    // 5. Create the email object using the main Brevo object
+    // 4. Create the email object
     const sendSmtpEmail = new Brevo.SendSmtpEmail();
 
     sendSmtpEmail.subject = "Your New Hostel Account Details";
@@ -40,7 +38,7 @@ const sendWelcomeEmail = async (toEmail, studentName, rollNo, tempPassword) => {
     ];
 
     try {
-        // 6. Send the email
+        // 5. Send the email
         await apiInstance.sendTransacEmail(sendSmtpEmail);
         console.log('Welcome email sent via Brevo to:', toEmail);
     } catch (error) {
