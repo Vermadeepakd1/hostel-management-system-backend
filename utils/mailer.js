@@ -19,7 +19,7 @@ const sendWelcomeEmail = async (toEmail, studentName, rollNo, tempPassword) => {
     sendSmtpEmail.subject = "Your New Hostel Account Details";
 
     // --- IMPORTANT: REPLACE THIS URL WITH YOUR LIVE FRONTEND URL ---
-    const frontendLoginUrl = 'https://hostelmanagement-system-rho.vercel.app'; // Or your deployed URL
+    const frontendLoginUrl = 'https://hostelmanagementsystem-rho.vercel.app/'; // Or your deployed URL
 
     // 5. Updated & Beautified HTML Content
     sendSmtpEmail.htmlContent = `
