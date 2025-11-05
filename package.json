@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/Vermadeepakd1/hostel-management-system-backend#readme",
   "dependencies": {
+    "@getbrevo/brevo": "^3.0.1",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
