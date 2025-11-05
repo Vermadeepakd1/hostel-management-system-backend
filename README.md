@@ -6,7 +6,7 @@ A robust and secure REST API for a comprehensive Hostel Management System, built
 
 * **Admin Dashboard**: Full CRUD (Create, Read, Update, Delete) operations for managing students and rooms, including new safety checks for updates and deletions.
 * **Student Portal**: Secure endpoints for students to view their profile, check fee history, and manage requests.
-* **Secure Onboarding**: Generates a random, secure password for new students and sends credentials via email using **Nodemailer**. All passwords are hashed using **bcrypt**.
+* **Secure Onboarding**: Generates a random, secure password for new students and sends credentials via email using **Brevo (Sendinblue)**. All passwords are hashed using **bcrypt**.
 * **Transactional Integrity**: Uses database transactions to safely add students (individually or in bulk) and update room occupancy, preventing data inconsistency.
 * **Out Pass System**: Full workflow for students to request out passes and for admins to approve or reject them.
 * **Announcement System**: An API for admins to create and post announcements and for students to view them.
@@ -19,7 +19,8 @@ A robust and secure REST API for a comprehensive Hostel Management System, built
 * **Backend**: Node.js, Express.js
 * **Database**: MySQL
 * **Authentication**: JSON Web Tokens (JWT), bcrypt
-* **Libraries**: `mysql2`, `jsonwebtoken`, `bcrypt`, `cors`, `dotenv`, `cookie-parser`, `multer`, `csv-parser`, `nodemailer`
+* **Email Service**: Brevo (formerly Sendinblue)
+* **Libraries**: `mysql2`, `jsonwebtoken`, `bcrypt`, `cors`, `dotenv`, `cookie-parser`, `multer`, `csv-parser`, `@getbrevo/brevo`
 
 ---
 
@@ -46,7 +47,7 @@ Follow these instructions to get a copy of the project up and running on your lo
     ```
 
 3.  **Create a `.env` file** in the root directory and add the following environment variables.
-    * **Note:** You must set up a Gmail account with an **"App Password"** for the email service to work.
+    * **Note:** You must set up a **Brevo** account, get an API key, and verify a sender email for the email service to work.
 
     ```env
     PORT=5000
@@ -57,8 +58,8 @@ Follow these instructions to get a copy of the project up and running on your lo
     DB_PORT=3306
     JWT_SECRET=your_super_secret_jwt_key
     
-    EMAIL_USER=your-email@gmail.com
-    EMAIL_PASS=your-16-character-app-password
+    BREVO_API_KEY=your_brevo_api_key
+    SENDER_EMAIL=your_verified_sender_email@example.com
     ```
 
 4.  **Set up the database:**
@@ -87,7 +88,7 @@ The base URL for all endpoints is `/`. All routes are protected by the `verifyTo
 | `GET` | `/students` | Gets a list of all students. |
 | `PUT` | `/students/update/:id` | Updates a specific student. |
 | `DELETE`| `/students/delete/:id` | Deletes a specific student. |
-| `POST` | `/students/upload` | Bulk-adds students from a CSV file. |
+| `POST` | `/students/upload` | Bulk-adds students from a CSV file (transactional). |
 | `POST` | `/rooms/add` | Adds a new room. |
 | `GET` | `/rooms` | Gets a list of all rooms. |
 | `PUT` | `/rooms/update/:id` | Updates a room's capacity (with safety checks). |
