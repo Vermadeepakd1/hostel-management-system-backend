@@ -9,6 +9,9 @@ const multer = require('multer');
 const csv = require('csv-parser');
 const stream = require('stream');
 
+const { sendWelcomeEmail } = require('../utils/mailer');
+const { generatePassword } = require('../utils/helpers');
+
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
@@ -30,7 +33,7 @@ const parseCsv = (buffer) => {
 
 
 
-// Add a new student (UPDATED WITH TRANSACTION LOGIC)
+// Add a new student (UPDATED with random password and email)
 router.post('/add', verifyToken, async (req, res) => {
     const connection = await db.promise().getConnection();
     try {
@@ -39,11 +42,14 @@ router.post('/add', verifyToken, async (req, res) => {
         // --- Start of Transaction ---
         await connection.beginTransaction();
 
-        // Step 1: Hash the initial password (which is the roll_no)
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(roll_no, salt);
+        // Step 1: Generate a new temporary password
+        const tempPassword = generatePassword();
 
-        // Room availability checks (as you had before)
+        // Step 2: Hash the new temporary password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(tempPassword, salt);
+
+        // Step 3: Room availability checks
         const [rooms] = await connection.query('SELECT * FROM rooms WHERE room_number = ?', [room_no]);
         if (rooms.length === 0) {
             await connection.rollback();
@@ -57,7 +63,7 @@ router.post('/add', verifyToken, async (req, res) => {
             return res.status(409).json({ message: 'Room is already full' });
         }
 
-        // Step 2: Insert the new student with the corrected SQL
+        // Step 4: Insert the new student with the new hashed password
         await connection.query(
             `INSERT INTO students 
                 (name, roll_no, email, phone, gender, dob, address, guardian_name, guardian_phone, room_no, department, year, password)
@@ -66,21 +72,39 @@ router.post('/add', verifyToken, async (req, res) => {
             [name, roll_no, email, phone, gender, dob, address, guardian_name, guardian_phone, room_no, department, year, hashedPassword]
         );
 
-        // Step 3: Update the room's occupancy
+        // Step 5: Update the room's occupancy
         await connection.query(
             'UPDATE rooms SET current_occupancy = current_occupancy + 1 WHERE id = ?',
             [room.id]
         );
 
+        // Step 6: Send the welcome email with the plain-text temporary password
+        await sendWelcomeEmail(email, name, roll_no, tempPassword);
+
+        // Step 7: If all steps succeed, commit the transaction
         await connection.commit();
         // --- End of Transaction ---
 
-        res.status(201).json({ message: 'Student added successfully' });
+        res.status(201).json({ message: 'Student added and welcome email sent successfully!' });
 
     } catch (err) {
+        // If any error occurs, roll back all changes
         await connection.rollback();
         console.error('Error adding student with transaction:', err);
-        res.status(500).json({ message: 'Server error' });
+
+        // Send a specific error message if email failed
+        if (err.message.includes('Failed to send welcome email')) {
+            return res.status(500).json({
+                message: 'Failed to send welcome email. Student was not created.',
+                error: err.message
+            });
+        }
+        // Handle duplicate entry errors
+        if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'A student with this roll number or email already exists.' });
+        }
+
+        res.status(500).json({ message: 'Server error during student creation.' });
     } finally {
         if (connection) connection.release();
     }
@@ -201,12 +225,9 @@ router.delete('/delete/:id', verifyToken, async (req, res) => {
 });
 
 
-// routes/students.js
-
-// ... (keep all your requires, multer setup, and parseCsv function) ...
 
 // @route   POST /students/upload
-// @desc    Add students in bulk from a CSV file (TRANSACTIONAL)
+// @desc    Add students in bulk from a CSV file (TRANSACTIONAL & SENDS EMAIL)
 // @access  Admin (implicit)
 router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
 
@@ -234,19 +255,21 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
         // 4. Loop through each student and validate them one by one
         for (const [index, student] of students.entries()) {
 
+            const rowNum = index + 2; // CSV rows start at 1, +1 for header
+
             // Check for required fields in CSV
             if (!student.name || !student.roll_no || !student.email || !student.room_no) {
-                throw new Error(`Row ${index + 2}: Missing required data (name, roll_no, email, or room_no).`);
+                throw new Error(`Row ${rowNum}: Missing required data (name, roll_no, email, or room_no).`);
             }
 
             // --- Check Room Availability ---
             const [roomRows] = await connection.query(
-                'SELECT capacity, current_occupancy FROM rooms WHERE room_number = ?',
+                'SELECT id, capacity, current_occupancy FROM rooms WHERE room_number = ?',
                 [student.room_no]
             );
 
             if (roomRows.length === 0) {
-                throw new Error(`Row ${index + 2}: Room "${student.room_no}" does not exist.`);
+                throw new Error(`Row ${rowNum}: Room "${student.room_no}" does not exist.`);
             }
 
             const room = roomRows[0];
@@ -254,12 +277,13 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
             // Check capacity, considering pending updates from this same batch
             const pendingOccupancy = roomOccupancyUpdates[student.room_no] || 0;
             if ((room.current_occupancy + pendingOccupancy) >= room.capacity) {
-                throw new Error(`Row ${index + 2}: Room "${student.room_no}" is full.`);
+                throw new Error(`Row ${rowNum}: Room "${student.room_no}" is full.`);
             }
 
-            // --- Hash Password ---
+            // --- NEW: Generate Random Password ---
+            const tempPassword = generatePassword();
             const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash(student.roll_no, salt);
+            const hashedPassword = await bcrypt.hash(tempPassword, salt);
 
             // --- Insert Student (with error check for duplicate roll_no/email) ---
             try {
@@ -275,13 +299,21 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
                     ]
                 );
 
-                // If insert is successful, track the occupancy update
+                // --- NEW: Send Welcome Email ---
+                // This is inside the transaction; if it fails, the whole batch fails
+                await sendWelcomeEmail(student.email, student.name, student.roll_no, tempPassword);
+
+                // If insert and email are successful, track the occupancy update
                 roomOccupancyUpdates[student.room_no] = (pendingOccupancy + 1);
                 addedCount++;
 
             } catch (err) {
                 if (err.code === 'ER_DUP_ENTRY') {
-                    throw new Error(`Row ${index + 2}: Duplicate entry for roll_no or email: "${student.roll_no} / ${student.email}".`);
+                    throw new Error(`Row ${rowNum}: Duplicate entry for roll_no or email: "${student.roll_no} / ${student.email}".`);
+                }
+                // Check for email sending error
+                if (err.message.includes('Failed to send welcome email')) {
+                    throw new Error(`Row ${rowNum}: Failed to send email to ${student.email}.`);
                 }
                 throw err;
             }
@@ -289,9 +321,12 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
 
         // 5. If all students are processed, apply the occupancy updates
         for (const roomNumber in roomOccupancyUpdates) {
+            const [roomRows] = await connection.query('SELECT id FROM rooms WHERE room_number = ?', [roomNumber]);
+            const roomId = roomRows[0].id;
+
             await connection.query(
-                'UPDATE rooms SET current_occupancy = current_occupancy + ? WHERE room_number = ?',
-                [roomOccupancyUpdates[roomNumber], roomNumber]
+                'UPDATE rooms SET current_occupancy = current_occupancy + ? WHERE id = ?',
+                [roomOccupancyUpdates[roomNumber], roomId]
             );
         }
 
@@ -299,7 +334,7 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
         await connection.commit();
 
         res.status(201).json({
-            message: `Successfully added ${addedCount} new students.`,
+            message: `Successfully added and sent email to ${addedCount} new students.`,
         });
 
     } catch (err) {
@@ -308,15 +343,13 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
         console.error('CSV Upload Transaction Error:', err.message);
         res.status(400).json({
             message: 'Upload failed. The entire batch was rolled back.',
-            error: err.message
+            error: err.message // This will send the specific error (e.g., "Row 5: Room "F-101" is full.")
         });
     } finally {
         // 8. Always release the connection
         if (connection) connection.release();
     }
 });
-
-
 
 
 module.exports = router;

@@ -4,31 +4,33 @@ A robust and secure REST API for a comprehensive Hostel Management System, built
 
 ## ✨ Features
 
--   **Admin Dashboard**: Full CRUD (Create, Read, Update, Delete) operations for managing students, rooms, fees, and complaints.
--   **Secure Authentication**: JWT-based authentication for both admins and students with hashed passwords using bcrypt.
--   **Student Portal**: Secure endpoints for students to view their profile, check fee history, and manage complaints.
--   **Automated Room Management**: Smart logic to automatically update room occupancy when students are added, moved, or removed.
--   **Role-Based Access Control**: Clear separation between admin and student privileges.
+* **Admin Dashboard**: Full CRUD (Create, Read, Update, Delete) operations for managing students and rooms, including new safety checks for updates and deletions.
+* **Student Portal**: Secure endpoints for students to view their profile, check fee history, and manage requests.
+* **Secure Onboarding**: Generates a random, secure password for new students and sends credentials via email using **Nodemailer**. All passwords are hashed using **bcrypt**.
+* **Transactional Integrity**: Uses database transactions to safely add students (individually or in bulk) and update room occupancy, preventing data inconsistency.
+* **Out Pass System**: Full workflow for students to request out passes and for admins to approve or reject them.
+* **Announcement System**: An API for admins to create and post announcements and for students to view them.
+* **CSV Bulk Upload**: Admin-only endpoints to bulk-upload new students and rooms from a CSV file, featuring full transactional validation to ensure data integrity.
 
 ---
 
 ## 🛠️ Tech Stack
 
--   **Backend**: Node.js, Express.js
--   **Database**: MySQL
--   **Authentication**: JSON Web Tokens (JWT), bcrypt
--   **Libraries**: `mysql2`, `jsonwebtoken`, `bcrypt`, `cors`, `dotenv`, `cookie-parser`
+* **Backend**: Node.js, Express.js
+* **Database**: MySQL
+* **Authentication**: JSON Web Tokens (JWT), bcrypt
+* **Libraries**: `mysql2`, `jsonwebtoken`, `bcrypt`, `cors`, `dotenv`, `cookie-parser`, `multer`, `csv-parser`, `nodemailer`
 
 ---
 
 ## 🚀 Getting Started
 
-Follow these instructions to get a copy of the project up and running on your local machine for development and testing purposes.
+Follow these instructions to get a copy of the project up and running on your local machine.
 
 ### **Prerequisites**
 
--   Node.js (v14 or higher)
--   MySQL Server
+* Node.js (v14 or higher)
+* MySQL Server
 
 ### **Installation & Setup**
 
@@ -43,7 +45,8 @@ Follow these instructions to get a copy of the project up and running on your lo
     npm install
     ```
 
-3.  **Create a `.env` file** in the root directory and add the following environment variables. Replace the values with your local database credentials.
+3.  **Create a `.env` file** in the root directory and add the following environment variables.
+    * **Note:** You must set up a Gmail account with an **"App Password"** for the email service to work.
 
     ```env
     PORT=5000
@@ -53,11 +56,14 @@ Follow these instructions to get a copy of the project up and running on your lo
     DB_NAME=hostel_system
     DB_PORT=3306
     JWT_SECRET=your_super_secret_jwt_key
+    
+    EMAIL_USER=your-email@gmail.com
+    EMAIL_PASS=your-16-character-app-password
     ```
 
 4.  **Set up the database:**
-    -   Create a new MySQL database named `hostel_system`.
-    -   Run the SQL queries found in the `database_schema.sql` file (or run them one by one) to create the necessary tables (`admins`, `students`, `rooms`, `fees`, `complaints`).
+    * Create a new MySQL database named `hostel_system`.
+    * Run the SQL queries to create all the necessary tables (`admins`, `students`, `rooms`, `fees`, `complaints`, `outpasses`, `announcements`).
 
 5.  **Start the server:**
     ```sh
@@ -69,42 +75,58 @@ Follow these instructions to get a copy of the project up and running on your lo
 
 ## 🔑 API Endpoint Documentation
 
-The base URL for all endpoints is `/`.
+The base URL for all endpoints is `/`. All routes are protected by the `verifyToken` middleware unless specified otherwise.
 
 ### **Admin Routes** 👨‍💼
 *(Requires admin authentication token)*
 
-| Method | Endpoint                    | Description                          |
-| :----- | :-------------------------- | :----------------------------------- |
-| `POST` | `/admin/login`              | Logs in an administrator.            |
-| `POST` | `/students/add`             | Adds a new student.                  |
-| `GET`  | `/students`                 | Gets a list of all students.         |
-| `PUT`  | `/students/update/:id`      | Updates a specific student.          |
-| `DELETE`| `/students/delete/:id`      | Deletes a specific student.          |
-| `POST` | `/rooms/add`                | Adds a new room.                     |
-| `GET`  | `/rooms`                    | Gets a list of all rooms.            |
-| `POST` | `/fees/add`                 | Records a fee payment for a student. |
-| `GET`  | `/fees/student/:id`         | Gets fee history for a student.      |
-| `GET`  | `/complaints`               | Gets all complaints.                 |
-| `PUT`  | `/complaints/update/:id`    | Updates a complaint's status.        |
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/admin/login` | Logs in an administrator. **(Public)** |
+| `POST` | `/students/add` | Adds a new student and sends a welcome email. |
+| `GET` | `/students` | Gets a list of all students. |
+| `PUT` | `/students/update/:id` | Updates a specific student. |
+| `DELETE`| `/students/delete/:id` | Deletes a specific student. |
+| `POST` | `/students/upload` | Bulk-adds students from a CSV file. |
+| `POST` | `/rooms/add` | Adds a new room. |
+| `GET` | `/rooms` | Gets a list of all rooms. |
+| `PUT` | `/rooms/update/:id` | Updates a room's capacity (with safety checks). |
+| `DELETE`| `/rooms/delete/:id` | Deletes an empty room (with safety checks). |
+| `POST` | `/rooms/upload` | Bulk-adds rooms from a CSV file. |
+| `POST` | `/fees/add` | Records a fee payment for a student. |
+| `GET` | `/fees/student/:id` | Gets fee history for a specific student. |
+| `GET` | `/complaints` | Gets all complaints from all students. |
+| `PUT` | `/complaints/update/:id`| Updates a complaint's status. |
+| `GET` | `/outpasses` | Gets all out pass requests from all students. |
+| `PUT` | `/outpasses/update/:id` | Approves or rejects an out pass request. |
+| `POST` | `/announcements/add` | Creates a new announcement. |
 
 ### **Student Routes** 🧑‍🎓
 *(Requires student authentication token)*
 
-| Method | Endpoint                         | Description                                |
-| :----- | :------------------------------- | :----------------------------------------- |
-| `POST` | `/auth/student/login`            | Logs in a student.                         |
-| `POST` | `/auth/student/change-password`  | Allows a student to change their password. |
-| `GET`  | `/student/profile`               | Gets the logged-in student's profile.      |
-| `GET`  | `/student/fees`                  | Gets the logged-in student's fee history.  |
-| `POST` | `/student/complaint`             | Submits a new complaint.                   |
-| `GET`  | `/student/complaint`             | Gets the logged-in student's complaints.   |
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/auth/student/login` | Logs in a student. **(Public)** |
+| `POST` | `/auth/student/change-password` | Allows a logged-in student to change their password. |
+| `GET` | `/student/profile` | Gets the logged-in student's profile. |
+| `GET` | `/student/fees` | Gets the logged-in student's fee history. |
+| `POST` | `/student/complaint` | Submits a new complaint. |
+| `GET` | `/student/complaint` | Gets the logged-in student's complaints. |
+| `POST` | `/student/outpass` | Submits a new out pass request. |
+| `GET` | `/student/outpass` | Gets the logged-in student's out pass history. |
+
+### **Shared Routes** 📢
+*(Requires any valid token - Admin or Student)*
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/announcements` | Gets a list of all announcements. |
 
 ---
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome. Feel free to check the [issues page](https://github.com/your-username/your-repo-name/issues) if you want to contribute.
+Contributions, issues, and feature requests are welcome. Feel free to check the [issues page](https://github.com/Vermadeepakd1/hostel-management-system-backend/issues) if you want to contribute.
 
 ---
 
