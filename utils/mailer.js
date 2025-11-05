@@ -1,22 +1,29 @@
 // utils/mailer.js
 const Brevo = require('@getbrevo/brevo');
 
-// 1. Configure the Brevo API
-const apiInstance = new Brevo.TransactionalEmailsApi();
-const apiKey = apiInstance.authentications['api-key'];
-apiKey.apiKey = process.env.BREVO_API_KEY;
+// --- THIS IS THE CORRECTED AUTHENTICATION ---
+// 1. Get the default API client instance
+const defaultClient = Brevo.ApiClient.instance;
 
-// 2. Create a reusable email-sending function
+// 2. Configure the 'api-key' authentication
+const apiKey = defaultClient.authentications['api-key'];
+apiKey.apiKey = process.env.BREVO_API_KEY;
+// ---------------------------------------------
+
+// 3. Now, create an instance of the API
+const apiInstance = new Brevo.TransactionalEmailsApi();
+
+// 4. Create a reusable email-sending function
 const sendWelcomeEmail = async (toEmail, studentName, rollNo, tempPassword) => {
 
-    // 3. Create the email object
+    // 5. Create the email object
     const sendSmtpEmail = new Brevo.SendSmtpEmail();
 
     sendSmtpEmail.subject = "Your New Hostel Account Details";
     sendSmtpEmail.htmlContent = `
         <p>Hello ${studentName},</p>
         <p>An account has been created for you in the hostel management portal.</p>
-        <p>Please use the following credentials to log in. You can change your password in profile section after your first login.</p>
+        <p>Please use the following credentials to log in. You can change your password through profile section after your first login.</p>
         <ul>
             <li><strong>Username (Roll No):</strong> ${rollNo}</li>
             <li><strong>Temporary Password:</strong> ${tempPassword}</li>
@@ -33,7 +40,7 @@ const sendWelcomeEmail = async (toEmail, studentName, rollNo, tempPassword) => {
     ];
 
     try {
-        // 4. Send the email
+        // 6. Send the email
         await apiInstance.sendTransacEmail(sendSmtpEmail);
         console.log('Welcome email sent via Brevo to:', toEmail);
     } catch (error) {
