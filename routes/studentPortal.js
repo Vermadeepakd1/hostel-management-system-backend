@@ -45,19 +45,21 @@ router.get('/fees', verifyToken, async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
+// routes/studentPortal.js
 
+// POST: A logged-in student submits a new complaint
 router.post('/complaint', verifyToken, async (req, res) => {
     try {
         const studentId = req.user.id;
-        const { description } = req.body;
+        const { description, category } = req.body; // <--- Get category from body
 
-        if (!description) {
-            return res.status(400).json({ message: 'Complaint description is required' });
+        if (!description || !category) {
+            return res.status(400).json({ message: 'Description and category are required' });
         }
 
         await db.promise().query(
-            'INSERT INTO complaints (student_id, description) VALUES (?, ?)',
-            [studentId, description]
+            'INSERT INTO complaints (student_id, description, category) VALUES (?, ?, ?)',
+            [studentId, description, category]
         );
 
         res.status(201).json({ message: 'Complaint submitted successfully' });
@@ -67,6 +69,7 @@ router.post('/complaint', verifyToken, async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 });
+
 
 router.get('/complaint', verifyToken, async (req, res) => {
     try {

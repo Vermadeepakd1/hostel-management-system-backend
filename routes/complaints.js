@@ -4,16 +4,33 @@ const router = express.Router();
 const db = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 
-// GET: Admin gets a list of all complaints
+// routes/complaints.js
+
+// GET: Admin gets a list of complaints (with optional filtering)
 router.get('/', verifyToken, async (req, res) => {
     try {
-        const [complaints] = await db.promise().query(
-            `SELECT c.id, c.description, c.status, c.created_at, s.name as student_name, s.roll_no, s.room_no 
-             FROM complaints c 
-             JOIN students s ON c.student_id = s.id 
-             ORDER BY c.created_at DESC`
-        );
+        const { category } = req.query; // <--- Get category from query params
+
+        let sql = `
+            SELECT c.id, c.description, c.category, c.status, c.created_at, 
+                   s.name as student_name, s.roll_no, s.room_no 
+            FROM complaints c 
+            JOIN students s ON c.student_id = s.id
+        `;
+
+        const queryParams = [];
+
+        // If a category is provided, add a WHERE clause
+        if (category && category !== 'All') {
+            sql += ' WHERE c.category = ?';
+            queryParams.push(category);
+        }
+
+        sql += ' ORDER BY c.created_at DESC';
+
+        const [complaints] = await db.promise().query(sql, queryParams);
         res.status(200).json(complaints);
+
     } catch (err) {
         console.error('Error fetching complaints:', err);
         res.status(500).json({ message: 'Server error' });

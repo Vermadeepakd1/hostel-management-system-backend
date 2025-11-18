@@ -363,5 +363,31 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
     });
 });
 
+// routes/students.js
+
+// GET: Get a single student's full profile by ID
+router.get('/:id', verifyToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const [student] = await db.promise().query(
+            'SELECT * FROM students WHERE id = ?',
+            [id]
+        );
+
+        if (student.length === 0) {
+            return res.status(404).json({ message: 'Student not found' });
+        }
+
+        // Remove the password hash before sending the data back
+        const { password, ...studentData } = student[0];
+
+        res.status(200).json(studentData);
+
+    } catch (err) {
+        console.error('Error fetching student profile:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
 
 module.exports = router;
